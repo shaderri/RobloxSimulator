@@ -3,10 +3,9 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from database.db_manager import create_group, get_group
+from database.db_manager import create_group, get_group, get_group_stats
 
 router = Router()
-
 
 class GroupCreation(StatesGroup):
     waiting_for_group_data = State()
@@ -18,18 +17,11 @@ async def cmd_create_group(message: Message, state: FSMContext):
     
     if len(message.text.strip()) == len('/creategroup'):
         instruction = """
-👥 <b>Для создания группы:</b>
+<b>Для создания группы:</b>
 
-📸 Фото
-📝 Название
-📄 Описание
-
-<b>Формат отправки:</b>
-<code>/creategroup
-Название: Название группы
-Описание: Описание группы</code>
-
-<i>Прикрепите фото к сообщению с данными!</i>
+• Фото
+• Название
+• Описание
 """
         await message.answer(instruction)
         await state.set_state(GroupCreation.waiting_for_group_data)
@@ -41,11 +33,8 @@ async def process_group_creation(message: Message, state: FSMContext):
     """Обработка создания группы"""
     
     try:
-        # Получаем фото
         photo = message.photo[-1]
         photo_id = photo.file_id
-        
-        # Парсим текст
         text = message.caption or ""
         
         data = {}
@@ -62,38 +51,26 @@ async def process_group_creation(message: Message, state: FSMContext):
                 elif key == "Описание":
                     data['description'] = value
         
-        # Проверка обязательных полей
         if 'title' not in data or 'description' not in data:
             await message.answer("❌ Заполните все поля!")
             return
         
-        # Создаём группу
-        group_id = create_group(
-            message.from_user.id,
-            photo_id,
-            data['title'],
-            data['description']
-        )
+        group_id = create_group(message.from_user.id, photo_id, data['title'], data['description'])
         
-        # Получаем данные группы
-        group = get_group(group_id)
+        # Получаем количество участников
+        members = get_group_stats(group_id)
         
-        # Формируем ответ
         group_text = f"""
-✅ <b>Ваша статистика группы:</b>
+<b>Ваша статистика группы:</b>
 
-<b>{group[3]}</b>
-{group[4]}
-{group[5]}👥 — участники
+{data['title']}
+{data['description']}
+{members}👥 — участники
 """
         
-        await message.answer_photo(
-            photo=photo_id,
-            caption=group_text
-        )
-        
+        await message.answer_photo(photo=photo_id, caption=group_text)
         await state.clear()
         
     except Exception as e:
-        await message.answer("❌ Ошибка при создании группы. Проверьте формат данных.")
+        await message.answer("❌ Ошибка при создании группы.")
         print(f"Error: {e}")

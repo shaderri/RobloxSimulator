@@ -12,6 +12,7 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
+    # Таблица пользователей
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -23,15 +24,14 @@ def init_db():
             friends INTEGER DEFAULT 0,
             followers INTEGER DEFAULT 0,
             following INTEGER DEFAULT 0,
-            visits INTEGER DEFAULT 0,
+            total_game_visits INTEGER DEFAULT 0,
             created_at TEXT,
             avatar_url TEXT,
-            balance INTEGER DEFAULT 0,
-            last_daily TEXT,
-            total_earned INTEGER DEFAULT 0
+            balance INTEGER DEFAULT 0
         )
     ''')
     
+    # Таблица друзей
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS friendships (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,6 +42,7 @@ def init_db():
         )
     ''')
     
+    # Таблица постов
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,6 +54,7 @@ def init_db():
         )
     ''')
     
+    # Таблица игр
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS games (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,16 +66,49 @@ def init_db():
             plot TEXT,
             gamepasses TEXT,
             status TEXT DEFAULT 'moderation',
-            online_players INTEGER DEFAULT 0,
-            visits INTEGER DEFAULT 0,
-            likes INTEGER DEFAULT 0,
-            dislikes INTEGER DEFAULT 0,
-            favorites INTEGER DEFAULT 0,
-            earned INTEGER DEFAULT 0,
             created_at TEXT
         )
     ''')
     
+    # Таблица игровых сессий (для реальной статистики)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS game_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id INTEGER,
+            player_id INTEGER,
+            session_start TEXT,
+            session_end TEXT,
+            robux_spent INTEGER DEFAULT 0,
+            FOREIGN KEY (game_id) REFERENCES games(id)
+        )
+    ''')
+    
+    # Таблица лайков/дизлайков игр
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS game_reactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id INTEGER,
+            user_id INTEGER,
+            reaction TEXT,
+            created_at TEXT,
+            UNIQUE(game_id, user_id),
+            FOREIGN KEY (game_id) REFERENCES games(id)
+        )
+    ''')
+    
+    # Таблица избранного
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS game_favorites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id INTEGER,
+            user_id INTEGER,
+            created_at TEXT,
+            UNIQUE(game_id, user_id),
+            FOREIGN KEY (game_id) REFERENCES games(id)
+        )
+    ''')
+    
+    # Таблица групп
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,8 +116,19 @@ def init_db():
             photo_id TEXT,
             title TEXT,
             description TEXT,
-            members INTEGER DEFAULT 1,
             created_at TEXT
+        )
+    ''')
+    
+    # Таблица участников групп
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS group_members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER,
+            user_id INTEGER,
+            joined_at TEXT,
+            UNIQUE(group_id, user_id),
+            FOREIGN KEY (group_id) REFERENCES groups(id)
         )
     ''')
     
@@ -118,12 +164,12 @@ def update_user_account(user_id, data):
         UPDATE users SET
             nickname = ?, premium = ?, value = ?, rap = ?,
             friends = ?, followers = ?, following = ?,
-            visits = ?, avatar_url = ?
+            avatar_url = ?
         WHERE user_id = ?
     ''', (
         data['nickname'], 1 if data['premium'] else 0,
         data['value'], data['rap'], data['friends'],
-        data['followers'], data['following'], data['visits'],
+        data['followers'], data['following'],
         data['avatar_url'], user_id
     ))
     conn.commit()
@@ -156,12 +202,15 @@ def create_post(user_id, username, content):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     created_at = datetime.now().strftime('%d.%m.%Y %H:%M')
+    
+    # Генерация реакций (4-5 знаков)
     reactions = {
-        'laugh': random.randint(1000, 9999),
-        'love': random.randint(1000, 9999),
-        'fire': random.randint(1000, 9999),
-        'comments': random.randint(500, 5000)
+        'shrug': random.randint(1000, 9999),
+        'shocked': random.randint(1000, 9999),
+        'christmas': random.randint(1000, 9999),
+        'comments': random.randint(1000, 9999)
     }
+    
     cursor.execute('''
         INSERT INTO posts (user_id, username, content, reactions, created_at)
         VALUES (?, ?, ?, ?, ?)
@@ -185,7 +234,8 @@ def create_game(user_id, username, photo_id, title, description, plot, gamepasse
     return game_id
 
 
-def get_game(user_id, title):
+def get_game_by_title(user_id, title):
+    """Получить игру по названию"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
@@ -197,6 +247,267 @@ def get_game(user_id, title):
     return game
 
 
+def get_game_stats(game_id):
+    """Получить реальную статистику игры"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Активные сессии (игроки онлайн)
+    cursor.execute('''
+        SELECT COUNT(DISTINCT player_id) FROM game_sessions
+        WHERE game_id = ? AND session_end IS NULL
+    ''', (game_id,))
+    online_players = cursor.fetchone()[0]
+    
+    # Всего визитов
+    cursor.execute('''
+        SELECT COUNT(*) FROM game_sessions WHERE game_id = ?
+    ''', (game_id,))
+    total_visits = cursor.fetchone()[0]
+    
+    # Лайки
+    cursor.execute('''
+        SELECT COUNT(*) FROM game_reactions 
+        WHERE game_id = ? AND reaction = 'like'
+    ''', (game_id,))
+    likes = cursor.fetchone()[0]
+    
+    # Дизлайки
+    cursor.execute('''
+        SELECT COUNT(*) FROM game_reactions 
+        WHERE game_id = ? AND reaction = 'dislike'
+    ''', (game_id,))
+    dislikes = cursor.fetchone()[0]
+    
+    # Фавориты
+    cursor.execute('''
+        SELECT COUNT(*) FROM game_favorites WHERE game_id = ?
+    ''', (game_id,))
+    favorites = cursor.fetchone()[0]
+    
+    # Заработано Robux
+    cursor.execute('''
+        SELECT SUM(robux_spent) FROM game_sessions WHERE game_id = ?
+    ''', (game_id,))
+    earned = cursor.fetchone()[0] or 0
+    
+    conn.close()
+    
+    return {
+        'online_players': online_players,
+        'total_visits': total_visits,
+        'likes': likes,
+        'dislikes': dislikes,
+        'favorites': favorites,
+        'earned': earned
+    }
+
+
+def update_game_status(game_id, status):
+    """Обновить статус игры и запустить симуляцию игроков"""
+    import random
+    import re
+    
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('UPDATE games SET status = ? WHERE id = ?', (status, game_id))
+    
+    if status == 'approved':
+        # Получаем данные игры для анализа
+        cursor.execute('SELECT title, description, plot FROM games WHERE id = ?', (game_id,))
+        game = cursor.fetchone()
+        
+        if game:
+            title = game[0].lower()
+            description = game[1].lower()
+            plot = game[2].lower()
+            
+            # Ключевые слова популярных жанров
+            popular_keywords = [
+                'obby', 'simulator', 'tycoon', 'roleplay', 'rp', 'adventure',
+                'horror', 'parkour', 'race', 'battle', 'shooter', 'fps',
+                'anime', 'survival', 'zombie', 'adopt', 'pet', 'tower defense',
+                'dungeon', 'prison', 'jailbreak', 'murder', 'mystery',
+                'admin', 'god', 'speed', 'fly', 'rich', 'money', 'millionaire'
+            ]
+            
+            # Негативные слова (плохие игры)
+            negative_keywords = [
+                'test', 'тест', 'testing', 'пробная', 'первая игра',
+                'не доделана', 'бета', 'alpha', 'альфа', 'черновик',
+                'draft', 'wip', 'в разработке', 'плохая', 'bad'
+            ]
+            
+            # Подсчет популярности
+            popularity_score = 0
+            
+            # Проверяем наличие популярных ключевых слов
+            text_combined = f"{title} {description} {plot}"
+            for keyword in popular_keywords:
+                if keyword in text_combined:
+                    popularity_score += 1
+            
+            # Проверяем наличие негативных слов
+            for keyword in negative_keywords:
+                if keyword in text_combined:
+                    popularity_score -= 2
+            
+            # Длина описания влияет на качество
+            if len(description) > 50:
+                popularity_score += 1
+            if len(plot) > 100:
+                popularity_score += 1
+            
+            # Красивое название (с большой буквы, без цифр в начале)
+            if game[0][0].isupper() and not game[0][0].isdigit():
+                popularity_score += 1
+            
+            # Определяем начальные параметры игры
+            if popularity_score >= 4:
+                # Хитовая игра!
+                base_players = random.randint(500, 2000)
+                visit_multiplier = random.uniform(5.0, 10.0)
+                like_rate = random.uniform(0.85, 0.95)
+            elif popularity_score >= 2:
+                # Популярная игра
+                base_players = random.randint(100, 500)
+                visit_multiplier = random.uniform(3.0, 6.0)
+                like_rate = random.uniform(0.75, 0.85)
+            elif popularity_score >= 0:
+                # Обычная игра
+                base_players = random.randint(20, 100)
+                visit_multiplier = random.uniform(1.5, 3.0)
+                like_rate = random.uniform(0.65, 0.75)
+            else:
+                # Непопулярная игра
+                base_players = random.randint(1, 20)
+                visit_multiplier = random.uniform(0.5, 1.5)
+                like_rate = random.uniform(0.40, 0.60)
+            
+            # Генерируем начальную статистику
+            initial_visits = int(base_players * visit_multiplier)
+            total_reactions = int(initial_visits * random.uniform(0.3, 0.5))
+            likes = int(total_reactions * like_rate)
+            dislikes = total_reactions - likes
+            favorites = int(initial_visits * random.uniform(0.05, 0.15))
+            
+            # Заработок зависит от популярности
+            if popularity_score >= 4:
+                earned = int(initial_visits * random.uniform(5, 15))
+            elif popularity_score >= 2:
+                earned = int(initial_visits * random.uniform(2, 8))
+            else:
+                earned = int(initial_visits * random.uniform(0.5, 3))
+            
+            # Создаем фейковые сессии игроков
+            session_start = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Добавляем активных игроков (онлайн)
+            online_count = min(base_players, int(base_players * random.uniform(0.3, 0.7)))
+            for _ in range(online_count):
+                fake_player_id = random.randint(100000, 999999)
+                robux_spent = random.randint(0, 100) if random.random() > 0.7 else 0
+                cursor.execute('''
+                    INSERT INTO game_sessions (game_id, player_id, session_start, robux_spent)
+                    VALUES (?, ?, ?, ?)
+                ''', (game_id, fake_player_id, session_start, robux_spent))
+            
+            # Добавляем завершенные сессии (визиты)
+            for _ in range(initial_visits - online_count):
+                fake_player_id = random.randint(100000, 999999)
+                session_end = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                robux_spent = random.randint(0, 50) if random.random() > 0.8 else 0
+                cursor.execute('''
+                    INSERT INTO game_sessions (game_id, player_id, session_start, session_end, robux_spent)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (game_id, fake_player_id, session_start, session_end, robux_spent))
+            
+            # Добавляем лайки
+            for _ in range(likes):
+                fake_player_id = random.randint(100000, 999999)
+                cursor.execute('''
+                    INSERT OR IGNORE INTO game_reactions (game_id, user_id, reaction, created_at)
+                    VALUES (?, ?, 'like', ?)
+                ''', (game_id, fake_player_id, session_start))
+            
+            # Добавляем дизлайки
+            for _ in range(dislikes):
+                fake_player_id = random.randint(100000, 999999)
+                cursor.execute('''
+                    INSERT OR IGNORE INTO game_reactions (game_id, user_id, reaction, created_at)
+                    VALUES (?, ?, 'dislike', ?)
+                ''', (game_id, fake_player_id, session_start))
+            
+            # Добавляем фавориты
+            for _ in range(favorites):
+                fake_player_id = random.randint(100000, 999999)
+                cursor.execute('''
+                    INSERT OR IGNORE INTO game_favorites (game_id, user_id, created_at)
+                    VALUES (?, ?, ?)
+                ''', (game_id, fake_player_id, session_start))
+    
+    conn.commit()
+    conn.close()
+
+
+def simulate_game_activity(game_id):
+    """Симуляция активности игроков в игре (вызывается периодически)"""
+    import random
+    
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Получаем текущую статистику
+    cursor.execute('SELECT COUNT(*) FROM game_sessions WHERE game_id = ? AND session_end IS NULL', (game_id,))
+    current_online = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM game_sessions WHERE game_id = ?', (game_id,))
+    total_visits = cursor.fetchone()[0]
+    
+    # Естественное изменение онлайна
+    change = random.randint(-5, 10)
+    new_online_target = max(1, current_online + change)
+    
+    session_start = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    if change > 0:
+        # Добавляем новых игроков
+        for _ in range(change):
+            fake_player_id = random.randint(100000, 999999)
+            robux_spent = random.randint(0, 50) if random.random() > 0.9 else 0
+            cursor.execute('''
+                INSERT INTO game_sessions (game_id, player_id, session_start, robux_spent)
+                VALUES (?, ?, ?, ?)
+            ''', (game_id, fake_player_id, session_start, robux_spent))
+    else:
+        # Завершаем сессии некоторых игроков
+        cursor.execute('''
+            SELECT id FROM game_sessions 
+            WHERE game_id = ? AND session_end IS NULL 
+            LIMIT ?
+        ''', (game_id, abs(change)))
+        sessions_to_end = cursor.fetchall()
+        
+        session_end = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        for session in sessions_to_end:
+            cursor.execute('''
+                UPDATE game_sessions SET session_end = ? WHERE id = ?
+            ''', (session_end, session[0]))
+            
+            # Иногда игроки ставят лайк/дизлайк
+            if random.random() > 0.7:
+                cursor.execute('SELECT player_id FROM game_sessions WHERE id = ?', (session[0],))
+                player_id = cursor.fetchone()[0]
+                reaction = 'like' if random.random() > 0.3 else 'dislike'
+                cursor.execute('''
+                    INSERT OR IGNORE INTO game_reactions (game_id, user_id, reaction, created_at)
+                    VALUES (?, ?, ?, ?)
+                ''', (game_id, player_id, reaction, session_end))
+    
+    conn.commit()
+    conn.close()
+
+
 def get_pending_game(game_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -206,36 +517,38 @@ def get_pending_game(game_id):
     return game
 
 
-def update_game_status(game_id, status):
-    import random
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    if status == 'approved':
-        cursor.execute('''
-            UPDATE games SET status = ?, online_players = ?, visits = ?,
-                likes = ?, dislikes = ?, favorites = ?, earned = ?
-            WHERE id = ?
-        ''', (status, random.randint(10, 500), random.randint(1000, 50000),
-              random.randint(100, 5000), random.randint(10, 500),
-              random.randint(50, 2000), random.randint(500, 10000), game_id))
-    else:
-        cursor.execute('UPDATE games SET status = ? WHERE id = ?', (status, game_id))
-    conn.commit()
-    conn.close()
-
-
 def create_group(user_id, photo_id, title, description):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     created_at = datetime.now().strftime('%d.%m.%Y %H:%M')
+    
     cursor.execute('''
         INSERT INTO groups (user_id, photo_id, title, description, created_at)
         VALUES (?, ?, ?, ?, ?)
     ''', (user_id, photo_id, title, description, created_at))
     group_id = cursor.lastrowid
+    
+    # Автоматически добавляем создателя в участники
+    cursor.execute('''
+        INSERT INTO group_members (group_id, user_id, joined_at)
+        VALUES (?, ?, ?)
+    ''', (group_id, user_id, created_at))
+    
     conn.commit()
     conn.close()
     return group_id
+
+
+def get_group_stats(group_id):
+    """Получить статистику группы"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute('SELECT COUNT(*) FROM group_members WHERE group_id = ?', (group_id,))
+    members = cursor.fetchone()[0]
+    
+    conn.close()
+    return members
 
 
 def get_group(group_id):
@@ -245,3 +558,34 @@ def get_group(group_id):
     group = cursor.fetchone()
     conn.close()
     return group
+
+
+def add_game_visit(game_id, player_id):
+    """Добавить визит в игру (для статистики)"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    session_start = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    cursor.execute('''
+        INSERT INTO game_sessions (game_id, player_id, session_start)
+        VALUES (?, ?, ?)
+    ''', (game_id, player_id, session_start))
+    
+    # Обновляем общий счетчик визитов пользователя
+    cursor.execute('''
+        UPDATE users SET total_game_visits = total_game_visits + 1
+        WHERE user_id = ?
+    ''', (player_id,))
+    
+    conn.commit()
+    conn.close()
+
+
+def get_user_total_visits(user_id):
+    """Получить общее количество визитов в играх пользователя"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT total_game_visits FROM users WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else 0

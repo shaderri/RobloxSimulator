@@ -3,17 +3,15 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from database.db_manager import create_game, get_game, get_user
+from database.db_manager import (create_game, get_game_by_title, get_game_stats, 
+                                  get_user, add_game_visit, get_pending_game)
 from config import ADMIN_ID
 
 router = Router()
 
-
 class GameCreation(StatesGroup):
     waiting_for_game_data = State()
 
-
-# Временное хранилище для игр на модерации
 pending_games = {}
 
 
@@ -21,28 +19,16 @@ pending_games = {}
 async def cmd_create_game(message: Message, state: FSMContext):
     """Создание игры"""
     
-    # Проверяем, это инструкция или данные
     if len(message.text.strip()) == len('/creategame'):
-        # Показываем инструкцию
         instruction = """
-🎮 <b>Для создания игры</b>
+<b>Для создания игры 🎮</b>
 Отправьте данные по пунктам:
 
-📸 Фото
-📝 Название
-📄 Описание
-📖 Сюжет
-🎟 Геймпассы
-
-<b>Формат отправки:</b>
-<code>/creategame
-Фото: [прикрепите фото]
-Название: Название вашей игры
-Описание: Краткое описание
-Сюжет: История игры
-Геймпассы: VIP, 2x Speed</code>
-
-<i>Прикрепите фото к сообщению с данными!</i>
+• Фото
+• Название
+• Описание
+• Сюжет
+• Геймпассы
 """
         await message.answer(instruction)
         await state.set_state(GameCreation.waiting_for_game_data)
@@ -51,14 +37,11 @@ async def cmd_create_game(message: Message, state: FSMContext):
 
 @router.message(GameCreation.waiting_for_game_data, F.photo)
 async def process_game_creation(message: Message, state: FSMContext):
-    """Обработка данных игры с фото"""
+    """Обработка данных игры"""
     
     try:
-        # Получаем фото
         photo = message.photo[-1]
         photo_id = photo.file_id
-        
-        # Парсим текст
         text = message.caption or ""
         
         data = {}
@@ -79,16 +62,14 @@ async def process_game_creation(message: Message, state: FSMContext):
                 elif key == "Геймпассы":
                     data['gamepasses'] = value
         
-        # Проверка обязательных полей
         required = ['title', 'description', 'plot', 'gamepasses']
         if not all(k in data for k in required):
             await message.answer("❌ Заполните все поля!")
             return
         
-        # Сохраняем игру
         game_id = create_game(
             message.from_user.id,
-            message.from_user.username or "Unknown",
+            message.from_user.username or "RobloxPlayer",
             photo_id,
             data['title'],
             data['description'],
@@ -96,28 +77,26 @@ async def process_game_creation(message: Message, state: FSMContext):
             data['gamepasses']
         )
         
-        # Сохраняем ID игры и пользователя для модерации
         pending_games[game_id] = message.from_user.id
         
-        await message.answer("✅ <b>Ваша игра была создана и проходит модерацию 🔍</b>")
+        await message.answer("<b>Ваша игра была создана и проходит модерацию 🔍</b>")
         
-        # Отправляем админу
+        # Отправка админу
         try:
             admin_text = f"""
-🎮 <b>Игра от пользователя @{message.from_user.username or 'Unknown'}</b>
+<b>Игра от пользователя @{message.from_user.username or 'Unknown'}</b>
 
-<b>Название:</b> {data['title']}
-<b>Описание:</b> {data['description']}
-<b>Сюжет:</b> {data['plot']}
-<b>Геймпассы:</b> {data['gamepasses']}
+Фото: (см. выше)
+Название: {data['title']}
+Описание: {data['description']}
+Сюжет: {data['plot']}
+Геймпассы: {data['gamepasses']}
 
 <b>Вы одобряете игру?</b>
 /yes_{game_id} или /no_{game_id}
 """
             
-            from aiogram import Bot
-            bot = message.bot
-            await bot.send_photo(
+            await message.bot.send_photo(
                 chat_id=ADMIN_ID,
                 photo=photo_id,
                 caption=admin_text
@@ -128,15 +107,14 @@ async def process_game_creation(message: Message, state: FSMContext):
         await state.clear()
         
     except Exception as e:
-        await message.answer("❌ Ошибка при создании игры. Проверьте формат данных.")
+        await message.answer("❌ Ошибка при создании игры.")
         print(f"Error: {e}")
 
 
 @router.message(Command("mygame"))
 async def cmd_my_game(message: Message):
-    """Статистика игры"""
+    """Статистика игры с РЕАЛЬНЫМИ данными + симуляция"""
     
-    # Получаем название игры
     parts = message.text.split(maxsplit=1)
     
     if len(parts) < 2:
@@ -147,9 +125,7 @@ async def cmd_my_game(message: Message):
         return
     
     title = parts[1]
-    
-    # Получаем игру из БД
-    game = get_game(message.from_user.id, title)
+    game = get_game_by_title(message.from_user.id, title)
     
     if not game:
         await message.answer(
@@ -158,29 +134,49 @@ async def cmd_my_game(message: Message):
         )
         return
     
-    # Получаем данные пользователя для никнейма
-    user = get_user(message.from_user.id)
-    nickname = user[2] if user and user[2] else "Unknown"
+    game_id = game[0]
     
-    # Форматируем статистику
+    # Добавляем визит владельца (статистика растет!)
+    add_game_visit(game_id, message.from_user.id)
+    
+    # Симулируем активность ботов (естественное изменение)
+    from database.db_manager import simulate_game_activity
+    simulate_game_activity(game_id)
+    
+    # Получаем обновленную статистику
+    stats = get_game_stats(game_id)
+    
+    user = get_user(message.from_user.id)
+    nickname = user[2] if user and user[2] else "RobloxPlayer"
+    
+    # Определяем статус игры
+    if stats['online_players'] > 1000:
+        status_badge = "🔥 ХИТ!"
+    elif stats['online_players'] > 500:
+        status_badge = "⭐ ПОПУЛЯРНАЯ"
+    elif stats['online_players'] > 100:
+        status_badge = "📈 Растущая"
+    elif stats['online_players'] > 20:
+        status_badge = "✅ Активная"
+    else:
+        status_badge = "🌱 Новая"
+    
+    # Формат ровно как в ТЗ
     stats_text = f"""
-📊 <b>Ваша статистика игры «{game[4]}»</b>
+<b>Ваша статистика игры «{game[4]}»</b>
+{status_badge}
 
-В сети игроков — {game[9]}👥
-Визиты — {game[10]:,}👤
-👍{game[11]:,} 👎{game[12]:,}
+В сети игроков — {stats['online_players']}👥
+Визиты — {stats['total_visits']:,}👤
+👍{stats['likes']}   👎{stats['dislikes']}
 📈 Ваша игра находится в рекомендациях
-🌟 — {game[13]:,} фаворитов
+🌟 — {stats['favorites']} фаворитов
 ——————————————>>>
-Заработано — {game[14]:,} R$💸
+Заработано с игры — {stats['earned']:,} R$💸
 Разработчик — {nickname} 🛠
 """
     
-    # Отправляем с фото
     try:
-        await message.answer_photo(
-            photo=game[3],
-            caption=stats_text
-        )
+        await message.answer_photo(photo=game[3], caption=stats_text)
     except:
         await message.answer(stats_text)

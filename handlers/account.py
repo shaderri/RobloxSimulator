@@ -1,7 +1,7 @@
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message
-from database.db_manager import get_user, update_user_account, get_user_balance
+from database.db_manager import get_user, update_user_account, get_user_balance, get_user_total_visits
 
 router = Router()
 
@@ -24,9 +24,7 @@ async def cmd_myaccount(message: Message):
             "Друзья: 50\n"
             "Подписчики: 100\n"
             "Подписан: 75\n"
-            "Визиты: 10000\n"
-            "Avatar URL: https://example.com/avatar.png</code>\n\n"
-            "<i>💡 Все поля обязательны</i>"
+            "Avatar URL: https://example.com/avatar.png</code>"
         )
         return
     
@@ -37,34 +35,26 @@ async def cmd_myaccount(message: Message):
     friends = user[6]
     followers = user[7]
     following = user[8]
-    visits = user[9]
+    total_visits = user[9]
     created_at = user[10]
     avatar_url = user[11]
-    balance = user[12]
     
-    premium_badge = "⭐ Premium" if premium else ""
+    # Формат как в ТЗ
+    account_name = f"{nickname} Premium" if premium else nickname
     
     account_text = f"""
-👤 <b>{nickname}</b> {premium_badge}
+<b>Ваш аккаунт — «{account_name}»</b>
 
-━━━━━━━━━━━━━━━━━━━━
+Value — {value:,} 💎
+RAP — {rap:,} 💸
 
-💎 <b>Value:</b> {value:,}
-💸 <b>RAP:</b> {rap:,}
-💰 <b>Robux:</b> {balance:,} R$
-
-👥 <b>Социальное:</b>
-• Друзья: {friends:,} 👤
-• Подписчики: {followers:,} 👥
-• Подписок: {following:,} 🔃
-
-📊 <b>Статистика:</b>
-• Визиты профиля: {visits:,} 👁
-• Аккаунт создан: {created_at}
-
-━━━━━━━━━━━━━━━━━━━━
-
-<i>🎮 Играй, создавай, зарабатывай!</i>
+Друзья — {friends:,}👤
+Подписчики — {followers:,}👥
+Подписан — {following:,}🔃
+———————————>>>>>
+Всего визитов в играх — {total_visits:,}👤
+————————>>>>>
+Аккаунт создан: {created_at} г.
 """
     
     if avatar_url and avatar_url.startswith('http'):
@@ -104,13 +94,10 @@ async def process_account_setup(message: Message):
                     data['followers'] = int(value)
                 elif key == "Подписан":
                     data['following'] = int(value)
-                elif key == "Визиты":
-                    data['visits'] = int(value)
                 elif key == "Avatar URL":
                     data['avatar_url'] = value
         
-        required = ['nickname', 'premium', 'value', 'rap', 'friends', 
-                   'followers', 'following', 'visits']
+        required = ['nickname', 'premium', 'value', 'rap', 'friends', 'followers', 'following']
         
         if not all(k in data for k in required):
             await message.answer("❌ Заполни все поля корректно!")
@@ -139,14 +126,5 @@ async def cmd_balance(message: Message):
     """Показать баланс"""
     
     balance = get_user_balance(message.from_user.id)
-    user = get_user(message.from_user.id)
     
-    premium_text = ""
-    if user and user[3]:
-        premium_text = "\n\n⭐ <b>Premium активен!</b>\nЕжедневный бонус: 450 R$"
-    
-    await message.answer(
-        f"💰 <b>Твой баланс Robux</b>\n\n"
-        f"<b>{balance:,} R$</b> 💎{premium_text}\n\n"
-        f"<i>💡 Зарабатывай Robux создавая игры!</i>"
-    )
+    await message.answer(f"<b>Ваш баланс — {balance:,} R$💸</b>")
