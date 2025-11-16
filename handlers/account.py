@@ -1,16 +1,9 @@
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, FSInputFile
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import Message
 from database.db_manager import get_user, update_user_account, get_user_balance
-import os
 
 router = Router()
-
-
-class AccountSetup(StatesGroup):
-    waiting_for_data = State()
 
 
 @router.message(Command("myaccount"))
@@ -19,11 +12,11 @@ async def cmd_myaccount(message: Message):
     
     user = get_user(message.from_user.id)
     
-    if not user or not user[2]:  # Проверяем nickname
+    if not user or not user[2]:
         await message.answer(
-            "📝 <b>Настройка аккаунта</b>\n\n"
-            "Для начала заполните данные вашего Roblox аккаунта.\n\n"
-            "Отправьте данные в формате:\n\n"
+            "📝 <b>Настройка аккаунта Roblox</b>\n\n"
+            "Для начала заполни данные своего аккаунта.\n\n"
+            "<b>Отправь данные в формате:</b>\n\n"
             "<code>Никнейм: YourNickname\n"
             "Premium: Да/Нет\n"
             "Value: 1000\n"
@@ -32,11 +25,11 @@ async def cmd_myaccount(message: Message):
             "Подписчики: 100\n"
             "Подписан: 75\n"
             "Визиты: 10000\n"
-            "Avatar URL: https://example.com/avatar.png</code>"
+            "Avatar URL: https://example.com/avatar.png</code>\n\n"
+            "<i>💡 Все поля обязательны</i>"
         )
         return
     
-    # Формирование ответа
     nickname = user[2]
     premium = user[3]
     value = user[4]
@@ -47,31 +40,36 @@ async def cmd_myaccount(message: Message):
     visits = user[9]
     created_at = user[10]
     avatar_url = user[11]
+    balance = user[12]
     
-    premium_text = f"{nickname} Premium" if premium else nickname
+    premium_badge = "⭐ Premium" if premium else ""
     
     account_text = f"""
-<b>Ваш аккаунт — «{premium_text}»</b>
+👤 <b>{nickname}</b> {premium_badge}
 
-Value — {value} 💎
-RAP — {rap} 💸
+━━━━━━━━━━━━━━━━━━━━
 
-Друзья — {friends}👤
-Подписчики — {followers}👥
-Подписан — {following}🔃
-———————————>>>>>
-Всего визитов — {visits}👤
-————————>>>>>
-Аккаунт создан: {created_at} г.
+💎 <b>Value:</b> {value:,}
+💸 <b>RAP:</b> {rap:,}
+💰 <b>Robux:</b> {balance:,} R$
+
+👥 <b>Социальное:</b>
+• Друзья: {friends:,} 👤
+• Подписчики: {followers:,} 👥
+• Подписок: {following:,} 🔃
+
+📊 <b>Статистика:</b>
+• Визиты профиля: {visits:,} 👁
+• Аккаунт создан: {created_at}
+
+━━━━━━━━━━━━━━━━━━━━
+
+<i>🎮 Играй, создавай, зарабатывай!</i>
 """
     
-    # Отправка с аватаром если есть URL
     if avatar_url and avatar_url.startswith('http'):
         try:
-            await message.answer_photo(
-                photo=avatar_url,
-                caption=account_text
-            )
+            await message.answer_photo(photo=avatar_url, caption=account_text)
         except:
             await message.answer(account_text)
     else:
@@ -111,29 +109,28 @@ async def process_account_setup(message: Message):
                 elif key == "Avatar URL":
                     data['avatar_url'] = value
         
-        # Проверка обязательных полей
         required = ['nickname', 'premium', 'value', 'rap', 'friends', 
                    'followers', 'following', 'visits']
         
         if not all(k in data for k in required):
-            await message.answer("❌ Заполните все поля корректно!")
+            await message.answer("❌ Заполни все поля корректно!")
             return
         
         if 'avatar_url' not in data:
             data['avatar_url'] = None
         
-        # Сохранение данных
         update_user_account(message.from_user.id, data)
         
         await message.answer(
-            "✅ <b>Данные аккаунта успешно сохранены!</b>\n\n"
-            "Теперь используйте /myaccount для просмотра."
+            "✅ <b>Аккаунт успешно настроен!</b>\n\n"
+            "🎉 Добро пожаловать в Roblox!\n\n"
+            "Используй /myaccount для просмотра профиля."
         )
         
     except Exception as e:
         await message.answer(
-            "❌ Ошибка при обработке данных.\n"
-            "Проверьте формат и попробуйте снова."
+            "❌ <b>Ошибка при обработке данных</b>\n\n"
+            "Проверь формат и попробуй снова."
         )
 
 
@@ -142,5 +139,14 @@ async def cmd_balance(message: Message):
     """Показать баланс"""
     
     balance = get_user_balance(message.from_user.id)
+    user = get_user(message.from_user.id)
     
-    await message.answer(f"<b>Ваш баланс — {balance} R$💸</b>")
+    premium_text = ""
+    if user and user[3]:
+        premium_text = "\n\n⭐ <b>Premium активен!</b>\nЕжедневный бонус: 450 R$"
+    
+    await message.answer(
+        f"💰 <b>Твой баланс Robux</b>\n\n"
+        f"<b>{balance:,} R$</b> 💎{premium_text}\n\n"
+        f"<i>💡 Зарабатывай Robux создавая игры!</i>"
+    )
